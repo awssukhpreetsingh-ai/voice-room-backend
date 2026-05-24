@@ -39,3 +39,5 @@ RUN python3 manage.py collectstatic --noinput 2>/dev/null || true
 EXPOSE 80
 
 CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]
+
+# Testing Script 
