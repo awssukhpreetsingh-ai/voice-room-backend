@@ -1,4 +1,4 @@
-Django==6.0.4
+Django==5.2.14
 djangorestframework==3.17.1
 django-cors-headers==4.9.0
 django-storages==1.14.6
