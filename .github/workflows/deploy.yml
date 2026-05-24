@@ -1,0 +1,55 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  IMAGE: ghcr.io/awssukhpreetsingh-ai/voice-room-backend
+  CONTAINER: voice-room-backend
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./wavroom_backend
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: IMAGE,CONTAINER
+          script: |
+            echo "${{ secrets.CR_PAT }}" | docker login ghcr.io -u awssukhpreetsingh-ai --password-stdin
+            docker pull $IMAGE:latest
+            docker stop $CONTAINER || true
+            docker rm $CONTAINER || true
+            docker run -d \
+              --name $CONTAINER \
+              --restart unless-stopped \
+              -p 80:80 \
+              $IMAGE:latest
