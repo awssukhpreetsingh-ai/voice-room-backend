@@ -1,0 +1,17 @@
+Django==6.0.4
+djangorestframework==3.17.1
+django-cors-headers==4.9.0
+django-storages==1.14.6
+boto3==1.43.14
+psycopg2-binary==2.9.12
+redis==7.4.0
+firebase-admin==7.4.0
+livekit-api==1.1.0
+python-dotenv==1.2.2
+dj-database-url==3.1.2
+djangorestframework-simplejwt==5.5.1
+gunicorn==23.0.0
+django-storages[s3]
+
+
+

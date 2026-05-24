@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.sqlite3
+
+# Virtual Env
+venv/
+env/
+
+# Environment Variables
+.env
+
+# Mac
+.DS_Store
+
+# VSCode
+.vscode/
+
+# Logs
+*.log
+
+# Static/media cache
+media/
+staticfiles/
+
+# Firebase / Secrets
+*.json
+
+# AWS
+.aws/
+
+# Pytest
+.pytest_cache/
+
+# Migrations cache
+*.pyc
