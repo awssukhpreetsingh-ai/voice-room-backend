@@ -41,4 +41,3 @@ EXPOSE 80
 CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]
 
 # Testing Script 
-# Testing Script 2 
