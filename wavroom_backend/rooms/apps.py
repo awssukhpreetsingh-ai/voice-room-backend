@@ -11,7 +11,7 @@ def _run_reaper():
     # Imported here to avoid touching Django models before setup is complete.
     from rooms import redis_client as rc
     while True:
-        time.sleep(60)
+        time.sleep(30)
         try:
             rc.prune_expired()
         except Exception as e:

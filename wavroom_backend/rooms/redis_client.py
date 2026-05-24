@@ -308,6 +308,7 @@
 # All existing functionality unchanged.
 
 import json
+import os
 import uuid
 import redis
 import time
@@ -329,7 +330,7 @@ ROOM_KEY         = lambda room_id: f'rooms:data:{room_id}'
 RAISE_HAND_KEY   = lambda room_id: f'rooms:raise_hands:{room_id}'
 EMPTY_SINCE_KEY  = lambda room_id: f'rooms:empty_since:{room_id}'
 TTL              = settings.ROOM_TTL_SECONDS
-EMPTY_ROOM_GRACE = 20   # seconds before an empty room is auto-deleted
+EMPTY_ROOM_GRACE = 300   # seconds before an empty room is auto-deleted (5 min)
 HEARTBEAT_TIMEOUT = 180  # seconds — 3 missed 60-second host heartbeats
 
 
@@ -442,34 +443,63 @@ def _delete_room_keys(r, rid):
 
 
 def prune_expired():
-    r        = get_redis()
-    room_ids = r.smembers(ROOMS_SET)
-    now      = time.time()
-    for rid in room_ids:
-        if not r.exists(ROOM_KEY(rid)):
-            # Hash TTL expired but the ID is still in the set.
-            r.delete(EMPTY_SINCE_KEY(rid))
-            r.delete(BANNED_KEY(rid))
-            r.delete(MUTED_KEY(rid))
-            r.srem(ROOMS_SET, rid)
-            continue
+    r = get_redis()
 
-        # 1. Auto-delete rooms that have been empty beyond the grace period.
-        empty_ts = r.get(EMPTY_SINCE_KEY(rid))
-        if empty_ts is not None:
-            elapsed = now - float(empty_ts)
-            if elapsed > EMPTY_ROOM_GRACE:
-                _delete_room_keys(r, rid)
-                print(f'[prune] auto-deleted empty room {rid} (empty {elapsed:.0f}s)')
+    # Distributed lock: with multiple Gunicorn workers each running their own
+    # reaper thread, we must ensure only one process prunes at a time.
+    # The lock expires after 90 s so it self-heals if the holder crashes.
+    lock_key = 'rooms:reaper:lock'
+    lock_val = str(os.getpid())
+    acquired = r.set(lock_key, lock_val, nx=True, ex=90)
+    if not acquired:
+        return  # Another worker is pruning right now — skip this cycle.
+
+    try:
+        room_ids = r.smembers(ROOMS_SET)
+        now      = time.time()
+        for rid in room_ids:
+            if not r.exists(ROOM_KEY(rid)):
+                # Hash TTL expired but the ID is still in the set.
+                r.delete(EMPTY_SINCE_KEY(rid))
+                r.delete(BANNED_KEY(rid))
+                r.delete(MUTED_KEY(rid))
+                r.srem(ROOMS_SET, rid)
+                print(f'[prune] swept TTL-expired room {rid}')
                 continue
 
-        # 2. Auto-delete rooms whose host has gone silent (missed heartbeats).
-        hb_ts = r.hget(ROOM_KEY(rid), 'last_heartbeat')
-        if hb_ts is not None:
-            elapsed = now - float(hb_ts)
-            if elapsed > HEARTBEAT_TIMEOUT:
-                _delete_room_keys(r, rid)
-                print(f'[prune] auto-deleted stale room {rid} (no heartbeat {elapsed:.0f}s)')
+            # 1. Auto-delete rooms that have been empty beyond the grace period.
+            empty_ts = r.get(EMPTY_SINCE_KEY(rid))
+            if empty_ts is not None:
+                elapsed = now - float(empty_ts)
+                if elapsed > EMPTY_ROOM_GRACE:
+                    # Before deleting, confirm the host is also gone.
+                    # listener_count only tracks non-host participants, so a room
+                    # can show 0 listeners while the host is still present and
+                    # actively sending heartbeats. Trust the heartbeat over the count.
+                    hb_ts = r.hget(ROOM_KEY(rid), 'last_heartbeat')
+                    if hb_ts and (now - float(hb_ts)) < HEARTBEAT_TIMEOUT:
+                        # Host is alive — clear the stale empty marker and continue.
+                        r.delete(EMPTY_SINCE_KEY(rid))
+                        print(f'[prune] cleared stale empty-marker for room {rid} '
+                              f'(host heartbeat {now - float(hb_ts):.0f}s ago)')
+                        continue
+                    _delete_room_keys(r, rid)
+                    print(f'[prune] auto-deleted empty room {rid} '
+                          f'(empty {elapsed:.0f}s, no active host)')
+                    continue
+
+            # 2. Auto-delete rooms whose host has gone silent (missed heartbeats).
+            hb_ts = r.hget(ROOM_KEY(rid), 'last_heartbeat')
+            if hb_ts is not None:
+                elapsed = now - float(hb_ts)
+                if elapsed > HEARTBEAT_TIMEOUT:
+                    _delete_room_keys(r, rid)
+                    print(f'[prune] auto-deleted stale room {rid} '
+                          f'(no heartbeat {elapsed:.0f}s)')
+    finally:
+        # Only release the lock if this process still owns it.
+        if r.get(lock_key) == lock_val:
+            r.delete(lock_key)
 
 
 # ── Moderation ─────────────────────────────────
@@ -581,7 +611,11 @@ def update_heartbeat(room_id: str):
 
 def set_listener_count(room_id: str, count: int):
     """Overwrite listener_count with the authoritative value from LiveKit."""
-    get_redis().hset(ROOM_KEY(room_id), 'listener_count', max(0, count))
+    r = get_redis()
+    r.hset(ROOM_KEY(room_id), 'listener_count', max(0, count))
+    # If participants are present, cancel any pending empty-room cleanup.
+    if count > 0:
+        r.delete(EMPTY_SINCE_KEY(room_id))
 
 
 def _hash_to_dict(data):
