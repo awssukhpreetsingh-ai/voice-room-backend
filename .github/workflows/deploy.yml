@@ -12,10 +12,10 @@ env:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    environment: credentials
     permissions:
       contents: read
       packages: write
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -62,7 +62,6 @@ jobs:
             AWS_S3_REGION_NAME=${{ secrets.AWS_S3_REGION_NAME }}
             ENVEOF
             chmod 600 /home/ubuntu/$CONTAINER.env
-
             echo "${{ secrets.CR_PAT }}" | docker login ghcr.io -u awssukhpreetsingh-ai --password-stdin
             docker pull $IMAGE:latest
             docker stop $CONTAINER || true
