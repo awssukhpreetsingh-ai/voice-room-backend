@@ -112,7 +112,7 @@ def send_room_created_notification(host_user, room: dict):
         message = messaging.MulticastMessage(
             tokens=batch,
             notification=messaging.Notification(title=title, body=body),
-            data=data,
+            data={k: str(v) for k, v in data.items()},
             android=messaging.AndroidConfig(
                 priority='high',
                 notification=messaging.AndroidNotification(
