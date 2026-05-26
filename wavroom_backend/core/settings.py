@@ -123,6 +123,9 @@ DATABASES = {
 # Supabase PgBouncer doesn't support server-side named cursors.
 DATABASES['default']['DISABLE_SERVER_SIDE_CURSORS'] = True
 
+# ── MongoDB Atlas ──────────────────────────────
+MONGODB_URI = os.getenv('MONGODB_URI', '')
+
 # ── Redis ──────────────────────────────────────
 REDIS_HOST       = os.getenv('REDIS_HOST', 'localhost')
 REDIS_PORT       = int(os.getenv('REDIS_PORT', 6379))

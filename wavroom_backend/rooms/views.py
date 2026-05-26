@@ -77,6 +77,27 @@ async def _lk_update_permissions(lk_room, identity, can_publish,
         await lk_client.aclose()
 
 
+async def _lk_broadcast_chat_state(lk_room: str, disabled: bool):
+    """Send a chat_disabled / chat_enabled data packet to every participant
+    in the room using the LiveKit server API (reliable, server-authoritative)."""
+    import json
+    lk_client = livekit_api.LiveKitAPI(
+        LIVEKIT_HOST, LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+    try:
+        msg_type = 'chat_disabled' if disabled else 'chat_enabled'
+        data = json.dumps({'type': msg_type}).encode('utf-8')
+        await lk_client.room.send_data(
+            livekit_api.SendDataRequest(
+                room=lk_room,
+                data=data,
+                kind=0,  # DataPacketKind.RELIABLE = 0
+            )
+        )
+        print(f'[chat] server broadcast {msg_type} → {lk_room}')
+    finally:
+        await lk_client.aclose()
+
+
 async def _lk_remove_participant(lk_room, identity):
     lk_client = livekit_api.LiveKitAPI(
         LIVEKIT_HOST, LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
@@ -181,6 +202,14 @@ def room_detail(request, room_id):
                 User.objects.filter(id=host_id).update(talks_hosted=F('talks_hosted') + 1)
         except Exception as e:
             print(f'[talks_hosted] increment failed: {e}')
+
+        # Hard-delete all chat messages for this room from MongoDB.
+        try:
+            from rooms import mongo_client as mc
+            deleted = mc.delete_room_messages(room_id)
+            print(f'[delete] purged {deleted} chat messages for room {room_id}')
+        except Exception as e:
+            print(f'[delete] mongo chat cleanup failed: {e}')
 
     return Response({'message': 'Room closed'})
 
@@ -389,6 +418,17 @@ def disable_chat(request, room_id):
     if not room:
         return Response({'error': 'Room not found'}, status=404)
     rc.set_chat_disabled(room_id, True)
+    # Hard-delete chat history so a fresh slate appears if chat is re-enabled.
+    try:
+        from rooms import mongo_client as mc
+        mc.delete_room_messages(room_id)
+    except Exception as e:
+        print(f'[chat] mongo delete failed: {e}')
+    # Server-side broadcast so all connected clients update immediately.
+    try:
+        asyncio.run(_lk_broadcast_chat_state(room['livekit_room_name'], True))
+    except Exception as e:
+        print(f'[chat] broadcast failed: {e}')
     return Response({'chat_disabled': True})
 
 
@@ -398,7 +438,50 @@ def enable_chat(request, room_id):
     if not room:
         return Response({'error': 'Room not found'}, status=404)
     rc.set_chat_disabled(room_id, False)
+    try:
+        asyncio.run(_lk_broadcast_chat_state(room['livekit_room_name'], False))
+    except Exception as e:
+        print(f'[chat] broadcast failed: {e}')
     return Response({'chat_disabled': False})
+
+
+@api_view(['GET', 'POST'])
+def room_messages(request, room_id):
+    room = rc.get_room(room_id)
+    if not room:
+        return Response({'error': 'Room not found'}, status=404)
+
+    try:
+        from rooms import mongo_client as mc
+    except Exception as e:
+        return Response({'error': f'MongoDB unavailable: {e}'}, status=503)
+
+    if request.method == 'GET':
+        try:
+            messages = mc.get_messages(room_id)
+            return Response({'messages': messages})
+        except Exception as e:
+            print(f'[chat] mongo get failed: {e}')
+            return Response({'messages': []})
+
+    # POST — save a single message
+    sender_id   = (request.data.get('sender_id')   or '').strip()
+    sender_name = (request.data.get('sender_name') or '').strip()
+    text        = (request.data.get('text')        or '').strip()
+    msg_type    = (request.data.get('message_type') or 'text').strip()
+
+    if not sender_id or not sender_name or not text:
+        return Response({'error': 'sender_id, sender_name and text are required'},
+                        status=400)
+    if rc.is_chat_disabled(room_id):
+        return Response({'error': 'Chat is disabled'}, status=403)
+
+    try:
+        msg_id = mc.save_message(room_id, sender_id, sender_name, text, msg_type)
+        return Response({'id': msg_id}, status=201)
+    except Exception as e:
+        print(f'[chat] mongo save failed: {e}')
+        return Response({'error': str(e)}, status=500)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

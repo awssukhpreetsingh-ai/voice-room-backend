@@ -22,8 +22,9 @@ urlpatterns = [
     path('rooms/<str:room_id>/kick/',          views.kick_participant,     name='kick'),
     path('rooms/<str:room_id>/mute/',          views.mute_participant,     name='mute'),
     path('rooms/<str:room_id>/unmute/',        views.unmute_participant,   name='unmute'),
-    path('rooms/<str:room_id>/chat/disable/',  views.disable_chat,        name='chat-disable'),
-    path('rooms/<str:room_id>/chat/enable/',   views.enable_chat,         name='chat-enable'),
+    path('rooms/<str:room_id>/chat/disable/',   views.disable_chat,  name='chat-disable'),
+    path('rooms/<str:room_id>/chat/enable/',    views.enable_chat,   name='chat-enable'),
+    path('rooms/<str:room_id>/chat/messages/',  views.room_messages, name='chat-messages'),
 
     # LiveKit token
     path('token/',                             views.get_token,           name='get-token'),
